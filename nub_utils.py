@@ -370,6 +370,63 @@ def gen_nub_selector_v1(run=False):
     selector['stimulus_nubs_active'] = 0
     return selector
 
+def gen_nub_selector_v1_pupil(run=False,dilated=False):
+    selector = {}
+    if run:
+        selector['running'] = lambda x: x
+    else:
+        selector['running'] = lambda x: np.logical_not(x)
+    if dilated:
+        selector['dilated'] = lambda x: x
+    else:
+        selector['dilated'] = lambda x: np.logical_not(x)
+    selector['stimulus_size'] = lambda x: x==10
+    selector['stimulus_direction_deg'] = 1
+    selector['stimulus_nubs_active'] = 0
+    return selector
+
+def gen_nub_selector_v1_split_pupil(run=False,dilated=False,centered=False):
+    selector = {}
+    if run:
+        selector['running'] = lambda x: x
+    else:
+        selector['running'] = lambda x: np.logical_not(x)
+    selector['dilated'] = 1
+    selector['centered'] = 1
+    selector['stimulus_size'] = lambda x: x==10
+    selector['stimulus_direction_deg'] = 1
+    selector['stimulus_nubs_active'] = 0
+    return selector
+
+def gen_nub_selector_v1_split_pupil_centered(run=False,dilated=False,centered=True):
+    selector = {}
+    if run:
+        selector['running'] = lambda x: x
+    else:
+        selector['running'] = lambda x: np.logical_not(x)
+    if centered:
+        selector['centered'] = lambda x: x
+    else:
+        selector['centered'] = lambda x: np.logical_not(x)                                                 
+    selector['dilated'] = 1
+    selector['stimulus_size'] = lambda x: x==10
+    selector['stimulus_direction_deg'] = 1
+    selector['stimulus_nubs_active'] = 0
+    return selector
+
+def gen_nub_selector_v1_split_running_split_pupil_centered(run=None,dilated=None,centered=False):
+    selector = {}
+    selector['running'] = 1
+    if centered:
+        selector['centered'] = lambda x: x
+    else:
+        selector['centered'] = lambda x: np.logical_not(x)                                                 
+    selector['dilated'] = 1
+    selector['stimulus_size'] = lambda x: x==10
+    selector['stimulus_direction_deg'] = 1
+    selector['stimulus_nubs_active'] = 0
+    return selector
+
 def gen_nub_selector_s1(run=True):
     selector = {}
     if run:
@@ -876,7 +933,7 @@ def show_lin_subtracted(lin_subtracted,sortind,sorteach):
     plt.fill_between(np.arange(32),lb,ub)
     plt.axhline(0,linestyle='dotted',c='k')
 
-def compute_lkat_roracle(t):
+def compute_lkat_roracle(t,rcutoff=0.5):
     roracle = [None for iexpt in range(len(t))]
     for iexpt in range(len(t)):
         nroi = t[iexpt][1].shape[0]
@@ -885,14 +942,14 @@ def compute_lkat_roracle(t):
             roracle[iexpt][iroi] = np.corrcoef(t[iexpt][0][iroi].flatten(),t[iexpt][1][iroi].flatten())[0,1]
         print('roracle: %d/%d'%((roracle[iexpt]>0.5).sum(),nroi))
     roracle_lin = np.concatenate(roracle)
-    lkat = roracle_lin>0.5
+    lkat = roracle_lin>rcutoff
     return lkat
 
 def subtract_lin(test_response):
     test_norm_response = test_response.copy() - test_response[:,0:1]
     mn = 0 #test_norm_response.min(1)[:,np.newaxis]
     mx = test_norm_response.max(1)[:,np.newaxis]
-    test_norm_response = (test_norm_response-mn)/(mx-mn)
+    test_norm_response = (test_norm_response-mn)#/(mx-mn) # need to put this back 4/8/2020
     linear_pred = np.zeros_like(test_norm_response)
     single_whisker_responses = test_norm_response[:,[2**n for n in range(5)][::-1]]
     for i in range(linear_pred.shape[1]):

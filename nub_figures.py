@@ -19,6 +19,7 @@ keylist_v1_l23 = ['session_191108_M0403','session_191119_M0293','session_200311_
 
 move_fn = lambda x: np.nanmax(np.abs(x[:,8:-8]),axis=-1)>1
 run_fn = lambda x: np.nanmean(np.abs(x[:,8:-8]),axis=-1)>10
+dilation_fn = lambda x: np.nanmedian(x[:,8:-8],axis=-1)>0.02
 
 order1 = np.argsort((utils.nubs_active*np.array((16,1,4,8,2))[np.newaxis]).sum(1),kind='stable')
 order2 = np.argsort(utils.nubs_active[order1][::-1].sum(1),kind='stable')[::-1]
@@ -27,15 +28,20 @@ evan_order_apparent = np.argsort(utils.nubs_active[::-1].sum(1),kind='stable')[:
 nub_no = utils.nubs_active[evan_order_actual].sum(1)
 parula = ListedColormap(ut.loadmat('/Users/dan/Documents/code/adesnal/matlab_parula_colormap.mat','cmap'))
 
-def compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=utils.gen_nub_selector_v1):
-    df, roi_info, trial_info = ut.compute_tavg_dataframe(dsname,'nub_0',datafield='decon',keylist=keylist,run_fn=run_fn)
+def compute_tuning(dsname,keylist,datafield,run_fn,dilation_fn=dilation_fn,gen_nub_selector=utils.gen_nub_selector_v1):
+    # extract pandas dataframe from hdf5 file
+    df, roi_info, trial_info = ut.compute_tavg_dataframe(dsname,'nub_0',datafield='decon',keylist=keylist,run_fn=run_fn,dilation_fn=dilation_fn)
     keylist = list(roi_info.keys())
+    print(list(trial_info.keys()))
     
+    # separate trials into training set and test set
     train_test = [None for irun in range(2)]
     for irun in range(2):
-        selector = gen_nub_selector(run=irun)
+        selector = gen_nub_selector(run=irun,dilated=1,centered=1)
+        print(list(selector.keys()))
         train_test[irun] = utils.select_trials(trial_info,selector,0.5)
         
+    # compute tuning curves by averaging across trials
     tuning = [None for irun in range(2)]
     for irun in range(2):
         tuning[irun] = utils.compute_tuning(df,trial_info,selector,include=train_test[irun])
@@ -105,7 +111,7 @@ def compute_lkat_dfof(dsname,keylist,run_fn=move_fn,gen_nub_selector=utils.gen_n
 def compute_lkat_evan_style(dsname,keylist,run_fn=move_fn,pcutoff=0.05,dfof_cutoff=0.):
     lkat = [None for irun in range(2)]
     for irun in range(2):
-        df, roi_info, trial_info = ut.compute_tavg_dataframe(dsname,'nub_0',datafield='F',keylist=keylist,run_fn=run_fn)
+        df, roi_info, trial_info = ut.compute_tavg_dataframe(dsname,'nub_0',datafield='decon',keylist=keylist,run_fn=run_fn)
         if not irun:
             for expt in trial_info:
                 trial_info[expt]['running'] = ~trial_info[expt]['running']
@@ -121,27 +127,40 @@ def compute_lkat_evan_style(dsname,keylist,run_fn=move_fn,pcutoff=0.05,dfof_cuto
         lkat[irun] = np.concatenate(lkat_list,axis=0)
     return lkat
 
-def plot_tuning_curves(targets,dsname,keylist,datafield='decon',run_fn=move_fn,gen_nub_selector=utils.gen_nub_selector_v1,dfof_cutoff=None,run_conditions=[0,1],colorbar=True,line=True,pcutoff=0.05):
+def plot_tuning_curves(targets,dsname,keylist,datafield='decon',run_fn=move_fn,gen_nub_selector=utils.gen_nub_selector_v1,dfof_cutoff=None,run_conditions=[0,1],colorbar=True,line=True,pcutoff=0.05,rcutoff=-1):
+    # load data and average across trials to compute tuning curves
     tuning = compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector)
-    if dfof_cutoff is None:
-        lkat = [None for irun in range(2)]
-    else:
-        lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
+    lkat = compute_lkat_two_criteria(tuning,dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff,rcutoff=rcutoff)
+    #lkat_roracle = [utils.compute_lkat_roracle(tuning[irun]) for irun in range(2)]
+    ## figure out the neurons to include in the plot
+    #if dfof_cutoff is None:
+    #    #lkat = [None for irun in range(2)]
+    #    lkat = lkat_roracle
+    #else:
+    #    lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
+    #    lkat = [lkat[irun] & lkat_roracle[irun] for irun in range(2)]
     for irun in run_conditions:
+        # get final list of neurons and plot their tuning curves
         plot_tuning_curves_(tuning[irun],targets[irun],lkat=lkat[irun],colorbar=colorbar,line=line)
 
-def plot_combined_tuning_curves(targets,dsnames,keylists,datafields='decon',run_fns=None,gen_nub_selectors=utils.gen_nub_selector_v1,dfof_cutoff=None,run_conditions=[0,1],colorbar=True,line=True,pcutoff=0.05):
+def plot_combined_tuning_curves(targets,dsnames,keylists,datafields='decon',run_fns=None,gen_nub_selectors=utils.gen_nub_selector_v1,dfof_cutoff=None,run_conditions=[0,1],colorbar=True,line=True,pcutoff=0.05,rcutoff=-1):
+    # combine data from multiple hdf5 files and plot it
+    # function to separate movement trials from non-movement trials
     if run_fns is None:
         run_fns = [move_fn for ifn in range(len(dsnames))]
     tuning = []
     lkat = []
     for dsname,keylist,datafield,run_fn,gen_nub_selector in zip(dsnames,keylists,datafields,run_fns,gen_nub_selectors):
-        tuning.append(compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector))
-        if dfof_cutoff is None:
-            lkat.append(None)
-        else:
-            this_lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
-            lkat.append(this_lkat)
+        # iterate through combinations of cell types to plot
+        this_tuning = compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector)
+        tuning.append(this_tuning)
+        this_lkat = compute_lkat_two_criteria(this_tuning,dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff,rcutoff=rcutoff)
+        lkat.append(this_lkat)
+        #if dfof_cutoff is None:
+        #    lkat.append(None)
+        #else:
+        #    this_lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
+        #    lkat.append(this_lkat)
     #tuning: [[irun=0,irun=1],[irun=0,irun=1]]
            
     tuning = [np.concatenate([t[irun] for t in tuning],axis=0) for irun in range(2)]
@@ -159,8 +178,10 @@ def troubleshoot_lkat(dsname,keylist,datafield='decon',run_fn=None,gen_nub_selec
     return lkat_evan_style,lkat_roracle
 
 def plot_tuning_curves_(tuning,target,lkat=None,colorbar=True,line=True):
+    # apply filter based on roracle and plot
     nexpt = len(tuning)
 
+    # keep only cells with corrcoef btw. training and test tuning curves > 0.5
     lkat_roracle = utils.compute_lkat_roracle(tuning)
     if lkat is None:
         lkat = lkat_roracle
@@ -168,7 +189,7 @@ def plot_tuning_curves_(tuning,target,lkat=None,colorbar=True,line=True):
         lkat = lkat & lkat_roracle
         #print((lkat & lkat_roracle).mean())
 
-    
+    # keep cells based on lkat, and separate training set tuning curve from test set
     train_response = np.concatenate([tuning[iexpt][0] for iexpt in range(nexpt)],axis=0)[lkat]
     test_response = np.concatenate([tuning[iexpt][1] for iexpt in range(nexpt)],axis=0)[lkat]
     
@@ -188,12 +209,13 @@ def plot_tuning_curves_(tuning,target,lkat=None,colorbar=True,line=True):
     plt.tight_layout(pad=7)
     plt.savefig(target,dpi=300)
 
-def plot_patch_no_pref(target,dsname,keylist,datafield='decon',run_fn=move_fn,gen_nub_selector=utils.gen_nub_selector_v1,dfof_cutoff=None,pcutoff=0.05,run_conditions=[0,1],colorbar=True,line=True,fig=None,cs=['C0','C1']):
+def plot_patch_no_pref(target,dsname,keylist,datafield='decon',run_fn=move_fn,gen_nub_selector=utils.gen_nub_selector_v1,dfof_cutoff=None,pcutoff=0.05,run_conditions=[0,1],colorbar=True,line=True,fig=None,cs=['C0','C1'],rcutoff=-1):
     tuning = compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector)
-    if dfof_cutoff is None:
-        lkat = [None for irun in [0,1]]
-    else:
-        lkat = compute_lkat_evan_style(dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
+    lkat = compute_lkat_two_criteria(tuning,dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff,rcutoff=rcutoff)
+    #if dfof_cutoff is None:
+    #    lkat = [None for irun in [0,1]]
+    #else:
+    #    lkat = compute_lkat_evan_style(dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
     if fig is None:
         fig = plt.figure(figsize=(6,6))
     for irun in run_conditions:
@@ -237,7 +259,10 @@ def plot_patch_no_pref_(tuning,lkat=None,fig=None,c='C0'):
     
         
 def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True,fig=None,colorbar=True):
+    # show stimuli in order of increasing patch no (columns) and ROIs in order of preferred stim (rows)
+    # for each ROI (rows), stimulus indices in order of decreasing preference (columns are preference rank)
     sorteach = np.argsort(train_response[:,evan_order_actual],1)[:,::-1]
+    # sort ROIs according to their #1 ranked stimulus in the training set
     sortind = np.arange(train_response.shape[0])
     if fig is None:
         fig = plt.figure()
@@ -247,7 +272,10 @@ def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True,fig=
         sorteach = sorteach[new_indexing]
     nroi = test_response.shape[0]
     if nroi:
-        img = plt.imshow(test_response[sortind][:,evan_order_actual]/test_response[sortind].max(1)[:,np.newaxis],extent=[-0.5,31.5,0,5*ht],cmap=cmap,interpolation='none')
+        # plot test set tuning curves normalized to their max index in the test set
+        img = plt.imshow(test_response[sortind][:,evan_order_actual]/np.abs(test_response[sortind].max(1)[:,np.newaxis]),\
+                         extent=[-0.5,31.5,0,5*ht],cmap=cmap,interpolation='none')
+        # underneath, plot graphic of stimuli in the same order as the columns
         utils.draw_stim_ordering(evan_order_apparent,invert=True)
 
         show_every = 300
@@ -280,20 +308,24 @@ def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True,fig=
 def subtract_lin(tuning,lkat=None):
     nexpt = len(tuning)
     
-    if lkat is None:
-        lkat = utils.compute_lkat_roracle(tuning)
-    else:
-        lkat = lkat & utils.compute_lkat_roracle(tuning)
+    # to plot: cells that either have corrcoef training vs. test > 0.5, or both that and some other criterion
+    #if lkat is None:
+    #    lkat = utils.compute_lkat_roracle(tuning)
+    #else:
+    #    lkat = lkat & utils.compute_lkat_roracle(tuning)
 
     plt.figure()
     train_response = np.concatenate([tuning[iexpt][0] for iexpt in range(nexpt)],axis=0)[lkat]
     test_response = np.concatenate([tuning[iexpt][1] for iexpt in range(nexpt)],axis=0)[lkat]
     #test_response = np.concatenate([tuning[iexpt][0] for iexpt in range(nexpt)],axis=0)[lkat] # temporary for testing!
+    # convert to evoked event rates, normalized to max
+    fudge = 1e-4
     train_norm_response = train_response.copy() - train_response[:,0:1]
-    train_norm_response = train_norm_response/train_norm_response.max(1)[:,np.newaxis]
+    train_norm_response = train_norm_response/(fudge + train_norm_response[:,1:].max(1)[:,np.newaxis])
     test_norm_response = test_response.copy() - test_response[:,0:1]
-    test_norm_response = test_norm_response/test_norm_response.max(1)[:,np.newaxis]
+    test_norm_response = test_norm_response/(fudge + test_norm_response[:,1:].max(1)[:,np.newaxis])
 
+    # 
     linear_pred = np.zeros_like(test_norm_response)
     single_whisker_responses = test_norm_response[:,[2**n for n in range(5)][::-1]]
     for i in range(linear_pred.shape[1]):
@@ -302,7 +334,7 @@ def subtract_lin(tuning,lkat=None):
 
     sorteach = np.argsort(train_norm_response[:,evan_order_actual],1)[:,::-1]
     sortind = np.arange(train_norm_response.shape[0])
-    for n in [3,2,1,0]:
+    for n in [0]: #[3,2,1,0]:
         new_indexing = np.argsort(sorteach[:,n],kind='mergesort')
         sortind = sortind[new_indexing]
         sorteach = sorteach[new_indexing]
@@ -311,7 +343,7 @@ def subtract_lin(tuning,lkat=None):
     
     return lin_subtracted,sorteach,sortind
 
-def plot_lin_subtracted_(target,lin_subtracted,sorteach,sortind):
+def plot_lin_subtracted_(target=None,lin_subtracted=None,sorteach=None,sortind=None):
 
     #fig = plt.figure(figsize=(6,6))
     #ax = fig.add_subplot(1,1,1)
@@ -350,32 +382,48 @@ def plot_lin_subtracted_(target,lin_subtracted,sorteach,sortind):
 #     plt.xticks([])
 #     plt.yticks([])
     plt.tight_layout(pad=7)
-    
-    plt.savefig(target,dpi=300)
+    if not target is None:
+        plt.savefig(target,dpi=300)
 
-def plot_lin_subtracted(targets,dsname,keylist=None,datafield='decon',run_fn=move_fn,gen_nub_selector=utils.gen_nub_selector_v1,dfof_cutoff=None,pcutoff=0.05,run_conditions=[0,1]):
-    tuning = compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector)
+def compute_lkat_two_criteria(tuning,dsname,keylist,run_fn,dfof_cutoff=None,pcutoff=0.05,rcutoff=-1):
+    lkat_roracle = [utils.compute_lkat_roracle(tuning[irun],rcutoff=rcutoff) for irun in range(2)]
+    # figure out the neurons to include in the plot
     if dfof_cutoff is None:
-        lkat = [None for irun in range(2)]
+        #lkat = [None for irun in range(2)]
+        lkat = lkat_roracle
     else:
-        lkat = compute_lkat_evan_style(dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
+        lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
+        lkat = [lkat[irun] & lkat_roracle[irun] for irun in range(2)]
+    return lkat
+    
+
+def plot_lin_subtracted(targets,dsname,keylist=None,datafield='decon',run_fn=move_fn,gen_nub_selector=utils.gen_nub_selector_v1,dfof_cutoff=None,pcutoff=0.05,run_conditions=[0,1],rcutoff=-1):
+    tuning = compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector)
+    lkat = compute_lkat_two_criteria(tuning,dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff,rcutoff=rcutoff)
+    #if dfof_cutoff is None:
+    #    lkat = [None for irun in range(2)]
+    #else:
+    #    lkat = compute_lkat_evan_style(dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
     for irun in run_conditions:
         #lin_subtracted,sorteach,sortind = subtract_lin(tuning[irun],lkat=lkat[irun])
         lin_subtracted,sorteach,sortind = subtract_lin(tuning[irun],lkat=lkat[irun])
         plot_lin_subtracted_(targets[irun],lin_subtracted,sorteach,sortind)
+    return lin_subtracted,sorteach,sortind
         
-def plot_combined_lin_subtracted(targets,dsnames,keylists,datafields='decon',run_fns=None,gen_nub_selectors=utils.gen_nub_selector_v1,dfof_cutoff=None,pcutoff=0.05,run_conditions=[0,1],colorbar=True,line=True):
+def plot_combined_lin_subtracted(targets,dsnames,keylists,datafields='decon',run_fns=None,gen_nub_selectors=utils.gen_nub_selector_v1,dfof_cutoff=None,pcutoff=0.05,run_conditions=[0,1],colorbar=True,line=True,rcutoff=-1):
     if run_fns is None:
         run_fns = [move_fn for ifn in range(len(dsnames))]
     tuning = []
     lkat = []
     for dsname,keylist,datafield,run_fn,gen_nub_selector in zip(dsnames,keylists,datafields,run_fns,gen_nub_selectors):
-        tuning.append(compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector))
-        if dfof_cutoff is None:
-            lkat.append(None)
-        else:
-            this_lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
-            lkat.append(this_lkat)
+        this_tuning = compute_tuning(dsname,keylist,datafield,run_fn,gen_nub_selector=gen_nub_selector)
+        tuning.append(this_tuning)
+        this_lkat = compute_lkat_two_criteria(this_tuning,dsname,keylist,run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff,rcutoff=rcutoff)
+        lkat.append(this_lkat)
+        #if dfof_cutoff is None:
+        #    lkat.append(None)
+        #else:
+        #    this_lkat = compute_lkat_evan_style(dsname,keylist,run_fn=run_fn,dfof_cutoff=dfof_cutoff,pcutoff=pcutoff)
     tuning = [np.concatenate([t[irun] for t in tuning],axis=0) for irun in range(2)]
     if not lkat[0] is None:
         lkat = [np.concatenate([t[irun] for t in lkat],axis=0) for irun in range(2)]
