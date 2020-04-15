@@ -12,9 +12,14 @@ import autograd.scipy.special as ssp
 import scipy.stats as sst
 from matplotlib.colors import ListedColormap
 
+# visual stim ordering convention
 nub_locs = np.array([(0,0),(1,0),(0,1),(-1,0),(0,-1)])
+# number of patches/nubs
 nnub = nub_locs.shape[0]
+# (32,5) array indicating which patches are active for each stimulus
 nubs_active = np.concatenate([np.array([int(d) for d in '{0:b}'.format(x).zfill(5)])[np.newaxis] for x in range(32)],axis=0)
+
+### not used in final analysis
 and_gates = np.logical_and(nubs_active[:,1:],nubs_active[:,0:1]) # - 0.5*nubs_active[:,1:] - 0.5*nubs_active[:,0:1]
 or_gates = np.logical_or(nubs_active[:,1:],nubs_active[:,0:1]) # - 0.5*nubs_active[:,1:] - 0.5*nubs_active[:,0:1]
 xor_gates = np.logical_xor(nubs_active[:,1:],nubs_active[:,0:1]) # - 0.5*nubs_active[:,1:] - 0.5*nubs_active[:,0:1]
@@ -23,8 +28,15 @@ nubs_and = np.concatenate((nubs_active,and_gates),axis=1)
 nubs_or = np.concatenate((nubs_active,or_gates),axis=1)
 nubs_xor = np.concatenate((nubs_active,xor_gates),axis=1)
 nubs_xnor = np.concatenate((nubs_active,xnor_gates),axis=1)
+###
 
-parula = ListedColormap(ut.loadmat('/Users/dan/Documents/code/adesnal/matlab_parula_colormap.mat','cmap'))
+# similar to parula colormap, ported to python
+parula_path = '/Users/dan/Documents/code/adesnal/'
+parula_filename = parula_path+'matlab_parula_colormap.mat'
+parula = ListedColormap(ut.loadmat(parula_filename,'cmap'))
+
+###
+# not used in final analysis
 
 def f_miller_troyer(k,mu,s2):
     u = mu/np.sqrt(2*s2)
@@ -291,8 +303,11 @@ def show_fit(theta,bd=1.75,cbd=1,nub_order=np.array([0,1,2,3,4])):
     plt.xticks([])
     plt.yticks([])
 
+###
+
 def select_trials(trial_info,selector,training_frac,include_all=False):
-    # dict saying what to do with each trial type. If a function, apply that function to the trial info column to 
+    # selector a dict saying what to do with each trial type. 
+    # If a function, apply that function to the trial info column to 
     # obtain a boolean indexing variable
     # if 0, then the tuning output should be indexed by that variable
     # if 1, then that variable will be marginalized over in the tuning output
@@ -300,10 +315,18 @@ def select_trials(trial_info,selector,training_frac,include_all=False):
         ntrials = ti[params[0]].size
         gd = np.ones((ntrials,),dtype='bool')
         for param in params:
-            if callable(selector[param]): # all the values of selector that are functions, ignore trials where that function evaluates to False
+            if callable(selector[param]): 
+                # all the values of selector that are functions, ignore 
+                # trials where that function evaluates to False
+                # these trials will not be used in either training or 
+                # test set
                 exclude = ~selector[param](ti[param])
                 gd[exclude] = False
-        condition_list = gen_condition_list(ti,selector) # automatically, separated out such that each half of the data gets an equivalent fraction of trials with each condition type
+        condition_list = gen_condition_list(ti,selector) 
+        # automatically, separated out such that each half of the data 
+        # gets an equivalent fraction of trials with each condition type
+        # where selector[condition] == 1
+        # keep the non excluded trials
         condition_list = [c[gd] for c in condition_list]
         in_training_set = np.zeros((ntrials,),dtype='bool')
         in_test_set = np.zeros((ntrials,),dtype='bool')
@@ -336,12 +359,17 @@ def output_training_test(condition_list,training_frac):
     if not isinstance(condition_list,list):
         condition_list = [condition_list.copy()]
     iconds,uconds = zip(*[pd.factorize(c,sort=True) for c in condition_list])
+    # extract uconds the unique elements of each array in list condition_list, iconds the array s.t.
+    # condition_list[i][iconds[i]==j] = uconds[i][j]
     #uconds = [np.sort(u) for u in uconds]
     nconds = np.array([u.size for u in uconds])
     in_training_set = np.zeros(condition_list[0].shape,dtype='bool')
     for iflat in range(np.prod(nconds)):
+        # iterate through combinations of values for the variables to balance
         coords = np.unravel_index(iflat,tuple(nconds))
+        # find where the variables take on a given set of values
         lkat = np.where(ut.k_and(*[iconds[ic] == coords[ic] for ic in range(len(condition_list))]))[0]
+        # reserve half of those for the training set at random
         n_train = int(np.round(training_frac*len(lkat)))
         to_train = np.random.choice(lkat,n_train,replace=False)
         in_training_set[to_train] = True
@@ -349,6 +377,7 @@ def output_training_test(condition_list,training_frac):
     return in_training_set
 
 def gen_nub_selector_v1_all_sizes(run=False):
+    # selector that creates separate indices for the three sizes
     selector = {}
     if run:
         selector['running'] = lambda x: x
@@ -360,6 +389,7 @@ def gen_nub_selector_v1_all_sizes(run=False):
     return selector
 
 def gen_nub_selector_v1(run=False):
+    # selector that ignores sizes other than 10 degrees
     selector = {}
     if run:
         selector['running'] = lambda x: x
@@ -371,6 +401,8 @@ def gen_nub_selector_v1(run=False):
     return selector
 
 def gen_nub_selector_v1_pupil(run=False,dilated=False):
+    # selector that ignores (non-dilated/dilated) trials
+    # and sizes other than 10 degrees
     selector = {}
     if run:
         selector['running'] = lambda x: x
@@ -386,6 +418,7 @@ def gen_nub_selector_v1_pupil(run=False,dilated=False):
     return selector
 
 def gen_nub_selector_v1_split_pupil(run=False,dilated=False,centered=False):
+    # selector that balances for pupil-centered and pupil-dilated trials
     selector = {}
     if run:
         selector['running'] = lambda x: x
@@ -399,6 +432,8 @@ def gen_nub_selector_v1_split_pupil(run=False,dilated=False,centered=False):
     return selector
 
 def gen_nub_selector_v1_split_pupil_centered(run=False,dilated=False,centered=True):
+    # selector that ignores (non-centered/centered) trials
+    # and sizes other than 10 degrees, balances for dilation
     selector = {}
     if run:
         selector['running'] = lambda x: x
@@ -415,6 +450,9 @@ def gen_nub_selector_v1_split_pupil_centered(run=False,dilated=False,centered=Tr
     return selector
 
 def gen_nub_selector_v1_split_running_split_pupil_centered(run=None,dilated=None,centered=False):
+    # selector that ignores (non-centered/centered trials
+    # balances for running and dilation
+    # ignores sizes other than 10 degrees
     selector = {}
     selector['running'] = 1
     if centered:
@@ -437,6 +475,12 @@ def gen_nub_selector_s1(run=True):
     return selector
 
 def compute_tuning(df,trial_info,selector,include=None):
+    # given a dataframe and trial_info dict as input, return trial-avged tuning 
+    # curves for the running and non-running conditions. Trials are selected 
+    # and balanced using selector
+    # df is time-avged response per trial
+    # include is a dict with a list of boolean arrays for each expt giving training
+    # and test sets
     params = list(selector.keys())
     expts = list(trial_info.keys())
     nexpt = len(expts)
@@ -445,6 +489,7 @@ def compute_tuning(df,trial_info,selector,include=None):
         include = {expt:None for expt in expts}
     for iexpt,expt in enumerate(expts):
         in_this_expt = (df.session_id == expt)
+        # reshape dataframe to roi x trial
         trialwise = df[in_this_expt].pivot(values='data',index='roi_index',columns='trial_index')
         nroi = trialwise.shape[0]
         ntrial = trialwise.shape[1]
@@ -622,9 +667,14 @@ def compute_bootstrap_error(df,trial_info,selector,pct=(16,84),include=None):
 
 def gen_condition_list(ti,selector,filter_selector=lambda x:True):
 # ti: trial_info generated by ut.compute_tavg_dataframe
-# selector: dict where each key is a param in ti.keys(), and each value is either a callable returning a boolean, 
+# selector: dict where each key is a param in ti.keys(), and each value 
+# is either a callable returning a boolean, 
 # to be applied to ti[param], or an input to the function filter_selector
-# filter selector: if filter_selector(selector[param]), the tuning curve will be separated into the unique elements of ti[param]. 
+# filter selector: if filter_selector(selector[param]), the tuning curve 
+# will be separated into the unique elements of ti[param]. 
+# return a list of arrays. The unique elements of the ith member of this list
+# will ultimately be associated to the indices of the (i+1)th dimension of
+# the output
     params = list(selector.keys())
     condition_list = []
     for param in params:
