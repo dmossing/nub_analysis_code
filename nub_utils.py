@@ -431,6 +431,20 @@ def gen_nub_selector_v1_split_pupil(run=False,dilated=False,centered=False):
     selector['stimulus_nubs_active'] = 0
     return selector
 
+def gen_nub_selector_v1_split_pupil_all_sizes(run=False,dilated=False,centered=False):
+    # selector that balances for pupil-centered and pupil-dilated trials
+    selector = {}
+    if run:
+        selector['running'] = lambda x: x
+    else:
+        selector['running'] = lambda x: np.logical_not(x)
+    selector['dilated'] = 1
+    selector['centered'] = 1
+    selector['stimulus_size'] = 0
+    selector['stimulus_direction_deg'] = 1
+    selector['stimulus_nubs_active'] = 0
+    return selector
+
 def gen_nub_selector_v1_split_pupil_centered(run=False,dilated=False,centered=True):
     # selector that ignores (non-centered/centered) trials
     # and sizes other than 10 degrees, balances for dilation
@@ -465,7 +479,7 @@ def gen_nub_selector_v1_split_running_split_pupil_centered(run=None,dilated=None
     selector['stimulus_nubs_active'] = 0
     return selector
 
-def gen_nub_selector_s1(run=True):
+def gen_nub_selector_s1(run=True,dilated=0,centered=0):
     selector = {}
     if run:
         selector['running'] = lambda x: x
@@ -545,7 +559,10 @@ def compute_tuning_df(df,trial_info,selector,include=None):
             tip_df = pd.DataFrame(tip,index=np.arange(tip.shape[0]),columns=np.arange(tip.shape[1]))
             tip_df['partition'] = ipart
             tip_df['session_id'] = expt
-            tip_df['area'] = trial_info[expt]['area']
+            if 'area' in trial_info[expt]:
+                tip_df['area'] = trial_info[expt]['area']
+            else:
+                tip_df['area'] = 'not given'
             tuning = tuning.append(tip_df)
     return tuning
 
@@ -870,34 +887,46 @@ def fdr_bh(pvals,fdr=0.05):
     sig = (pvals_corr < fdr)
     return sig
 
-def test_sig_driven(df,roi_info,trial_info,pcutoff=0.05,dfof_cutoff=0.2):
+def test_sig_driven(df,roi_info,trial_info,pcutoff=0.05,dfof_cutoff=0.2,running=True):
+    # inputs: time-averaged dataframe, roi_info and trial_info dicts from ut.compute_tavg_dataframe. 
+    # Returns ROIs where evoked dF/F on at least one stim is different from spontaneous, 
+    # Benjamini-Hochberg corrected pval < pcutoff, and averaged evoked dF/F across all stims > dfof_cutoff
     if dfof_cutoff is None:
         dfof_cutoff = 0.
     session_ids = list(roi_info.keys())
     for expt in session_ids:
         in_this_expt = (df.session_id == expt)
-        trialwise = df[in_this_expt].pivot(values='data',index='roi_index',columns='trial_index')
-        roilist = np.unique(trialwise.index)
+        # reshape df to ROI x trial for this expt.
+        trialwise = df.loc[in_this_expt].pivot(values='data',index='roi_index',columns='trial_index')
+        roilist = trialwise.index.unique()
         nroi = roilist.size
         print('nroi: '+str(nroi))
         roi_info[expt]['sig_driven'] = np.zeros((nroi,),dtype='bool')
         trialcond = trial_info[expt]['stimulus_nubs_active']
         trialrun = trial_info[expt]['running']
+        if not running:
+            trialrun = ~trialrun
         condlist = np.unique(trialcond)
         ncond = len(condlist)
         stim_driven = np.zeros((nroi,ncond-1))
-        no_stim = (trialcond==0)&trialrun
+        no_stim = (trialcond==0)&trialrun # spontaneous activity during (non)running trials
+        yes_stim = (trialcond>0)&trialrun
         response_no_stim = np.array(trialwise.iloc[:,no_stim].T)
         roi_info[expt]['stim_pval'] = np.zeros((nroi,ncond-1))
-        mean_evoked_dfof = trialwise.iloc[:,~no_stim].mean(1) - trialwise.iloc[:,no_stim].mean(1)
+        # on (non)running trials, the mean stim response - mean non-stim response
+        mean_evoked_dfof = trialwise.iloc[:,yes_stim].mean(1) - trialwise.iloc[:,no_stim].mean(1)
         for icond,ucond in enumerate(condlist[1:]):
             this_stim = (trialcond==ucond)&trialrun
             response_this_stim = np.array(trialwise.iloc[:,this_stim].T)
             _,roi_info[expt]['stim_pval'][:,icond] = sst.ttest_ind(response_no_stim,response_this_stim)
         for iroi,uroi in enumerate(roilist):
+            # compute B-H corrected significant response to any stim with false discovery rate pcutoff
             different_from_0 = np.any(fdr_bh(roi_info[expt]['stim_pval'][iroi],fdr=pcutoff))
+            # sig. driven: significant response to at least one, and mean evoked dF/F > dfof_cutoff
             roi_info[expt]['sig_driven'][iroi] = (different_from_0 and mean_evoked_dfof[iroi]>dfof_cutoff)
         print('sig. driven: %d/%d'%(roi_info[expt]['sig_driven'].sum(),nroi))
+        #if running:
+        #    assert(True==False)
     return roi_info
 
 def compute_tuning_all(df,trial_info):
@@ -990,7 +1019,7 @@ def compute_lkat_roracle(t,rcutoff=0.5):
         roracle[iexpt] = np.zeros((nroi,))
         for iroi in range(nroi):
             roracle[iexpt][iroi] = np.corrcoef(t[iexpt][0][iroi].flatten(),t[iexpt][1][iroi].flatten())[0,1]
-        print('roracle: %d/%d'%((roracle[iexpt]>0.5).sum(),nroi))
+        print('roracle: %d/%d'%((roracle[iexpt]>rcutoff).sum(),nroi))
     roracle_lin = np.concatenate(roracle)
     lkat = roracle_lin>rcutoff
     return lkat
@@ -1061,7 +1090,7 @@ def test_validity_of_linear_pred(test_norm_response,linear_pred):
             y = linear_pred[:,ntuple]
             assert(all((x==y)|np.isnan(y)))
 
-def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True):
+def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True,draw_stim_ordering=True):
     sorteach = np.argsort(train_response[:,evan_order_actual],1)[:,::-1]
     sortind = np.arange(train_response.shape[0])
 #    fig = plt.figure()
@@ -1070,7 +1099,8 @@ def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True):
         sortind = sortind[new_indexing]
         sorteach = sorteach[new_indexing]
     img = plt.imshow(test_response[sortind][:,evan_order_actual]/test_response[sortind].max(1)[:,np.newaxis],extent=[-0.5,31.5,0,5*ht],cmap=cmap)
-    utils.draw_stim_ordering(evan_order_apparent,invert=True)
+    if draw_stim_ordering:
+        utils.draw_stim_ordering(evan_order_apparent,invert=True)
     
     nroi = test_response.shape[0]
     show_every = 300
@@ -1081,7 +1111,10 @@ def show_evan_style(train_response,test_response,ht=6,cmap=parula,line=True):
         plt.axhline(5*ht*(1-np.where(sorteach[:,0]==first_ind)[0][0]/nroi),c='w',linestyle='dotted')
     plt.ylabel('Neuron')
     plt.xlabel('Stimulus')
-    plt.ylim(-5,5*ht)
+    if draw_stim_ordering:
+        plt.ylim(-5,5*ht)
+    else:
+        plt.ylim(0,5*ht)
     plt.xlim(0.5,31.5)
     plt.xticks([])
     
