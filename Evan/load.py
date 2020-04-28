@@ -55,7 +55,7 @@ def get_files(index=0, string="_catch", directory="../Data"):
     return {"exp": exp_file, "daq": daq_file, "cfg": config_file, "roi": roi_files}
 
 
-def get_dataset(name='S1 L2/3'):
+def get_dataset(name='S1 L2/3', string="_catch", directory='../Data'):
     '''
     Filenames of all data for a given dataset. 
     
@@ -65,14 +65,14 @@ def get_dataset(name='S1 L2/3'):
         Dataset identifier.
     '''
     if name == 'S1 L2/3':
-        indices = range(0,3)
+        indices = range(0,4)
     elif name == 'S1 L4':
         indices = range(4,10)
     elif name == 'S1 L2/3 anes':
         indices = range(10,13)
     files = []
     for index in indices:
-        files.append(get_files(index))
+        files.append(get_files(index, string=string, directory=directory))
     files = {k: [f[k] for f in files] for k in files[0]} # unpack list of dicts to single dict of lists
     files['num'] = len(indices)
     #files['rid'] = np.repeat(np.arange(len(files['roi'])), [len(l) for l in files['roi']]) # index of ROI file into dataset
@@ -118,6 +118,18 @@ def load_config(filename):
     return trigger_frame, num_depths, frame_rate
 
 
+def load_roi_config(filenames: list):
+    config = []
+    for f in filenames:
+        with h5py.File(f, "r") as h5f:
+            pointer = h5f["ROIdata/Config"]
+            d = {}
+            for k in pointer:
+                d[k] = pointer[k][0][0]
+        config.append(d)
+    return config
+
+    
 def load_roi_data(filenames: list, location: str):
     '''
     Load ROI data. 
@@ -131,15 +143,14 @@ def load_roi_data(filenames: list, location: str):
     '''
     data = []
     for f in filenames:
-        h5f = h5py.File(f, "r")
-        n = len(h5f["ROIdata/rois/" + location])
-        dim = np.shape(
-            h5f[h5f["ROIdata/rois/" + location][0][0]][:]
-        )  # assumes all data has same dimensions
-        data.append(np.zeros([n] + list(dim)))
-        for n in np.arange(n):
-            data[-1][n,] = h5f[h5f["ROIdata/rois/" + location][n][0]][:]
-        h5f.close()
+        with h5py.File(f, "r") as h5f:
+            n = len(h5f["ROIdata/rois/" + location])
+            dim = np.shape(
+                h5f[h5f["ROIdata/rois/" + location][0][0]][:]
+            )  # assumes all data has same dimensions
+            data.append(np.zeros([n] + list(dim)))
+            for n in np.arange(n):
+                data[-1][n,] = h5f[h5f["ROIdata/rois/" + location][n][0]][:]
     data = np.concatenate(data[:], axis=0).squeeze()
     return data
 
