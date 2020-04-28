@@ -12,10 +12,12 @@ def compute_neuropil_coeff(fluorescence, neuropil):
 
 
 def correct_neuropil(fluorescence, neuropil, neuropil_coeff):
-    return fluorescence - neuropil_coeff[:, np.newaxis] * neuropil
+    if neuropil_coeff.ndim==1:
+        neuropil_coeff = neuropil_coeff[:, np.newaxis]
+    return fluorescence - neuropil_coeff * neuropil
 
 
-def baseline_fluorescence(traces, stim_id, trigger_frame, num_frames=4, di=None):
+def baseline_fluorescence(traces, stim_id, trigger_frame, num_frames=4, depth_id=None):
     assert(len(stim_id)==len(trigger_frame)/2)
     trigger_frame = np.reshape(trigger_frame, (-1,2))
     
@@ -28,22 +30,26 @@ def baseline_fluorescence(traces, stim_id, trigger_frame, num_frames=4, di=None)
             windows[idx,0] = trigger_frame[t,1] # end of 'stim' period
             windows[idx,1] = windows[idx,0] + min(np.median(np.diff(windows[:-1,:], 1)), np.size(traces,1))
         windows[idx,0] = windows[idx,1] - num_frames
-        if depth_indices:
-            windows[idx,0] = di[np.argmax(di>=windows[idx,0])]
-            windows[idx,1] = di[np.where(di<=windows[idx,1])[0][-1]]
-    vals = [np.mean(traces[:,windows[t,0]:windows[t,1]], axis=1) for t in range(windows.shape[0])] # mean over time
-    baseline = np.stack(vals).mean(axis=0) # mean over trials
+        if depth_id is not None:
+            windows[idx,0] = np.argmax(depth_id>=windows[idx,0])
+            windows[idx,1] = np.where(depth_id<=windows[idx,1])[0][-1]
+    vals = [np.nanmean(traces[:,windows[t,0]:windows[t,1]], axis=1) for t in range(windows.shape[0])] # mean over time
+    vals = np.stack(vals)
+    baseline = np.nanmean(vals, axis=0) # mean over trials
     baseline = baseline[:,np.newaxis]
     return baseline
 
 
 def dfof(f, f_0):
+    if f_0.ndim==1:
+        f_0 = f_0[:,np.newaxis]
     return((f-f_0)/f_0)
 
-def trial_align(traces, stim_start, depth_ID, n_before=16, n_after=31):
+
+def trial_align(traces, stim_start, depth_id, n_before=16, n_after=31):
     trial_aligned = []
     for trial, frame in enumerate(stim_start):
-        index = np.where(depth_ID >= frame)[0][0]
+        index = np.where(depth_id >= frame)[0][0]
         trial_aligned.append(traces[:, index - n_before : index + n_after])
     trial_aligned = np.stack(trial_aligned[:], axis=2)
     return trial_aligned
@@ -142,7 +148,6 @@ def sort_tuning_curves(curves):
     best_stim = np.argmax(curves, axis=1)
     # best_resp = np.amax(curves, axis=1)
     sel = selectivity(curves)
-    print(sel.shape)
     sort_index = np.lexsort((1-sel, best_stim))
     return sort_index
     
